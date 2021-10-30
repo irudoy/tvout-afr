@@ -48,11 +48,14 @@
 #define GRAPH_MAX 25
 
 #define DEBUG false
+#define DEBUG_GRAPH true
 
 TVout TV;
-float minAFR = 100, maxAFR = 0;
+double minAFR = 100, maxAFR = 0;
 byte graph[117] = { 0 };
 double currTemp = 1.0;
+
+int DEBUG_direction = 1;
 
 void setup()  {
   TV.begin(PAL, 128, 96);
@@ -70,8 +73,19 @@ void setup()  {
 
 void loop() {
   double prevTemp = currTemp;
+  double val = 0.0;
 
-  double val = readAFR();
+  if (!DEBUG_GRAPH) {
+    val = readAFR();
+  } else {
+    double step = 0.1;
+    val = DEBUG_direction == 1 ? prevTemp + step : prevTemp - step;
+    if (prevTemp <= 4.0 && DEBUG_direction == 0) {
+      DEBUG_direction = 1;
+    } else if (prevTemp >= 26.0 && DEBUG_direction == 1) {
+      DEBUG_direction = 0;
+    }
+  }
 
   double currAFR = prevTemp;
 
@@ -96,21 +110,20 @@ void loop() {
   TV.delay_frame(DELAY_FRAMES);
 }
 
-void display_min(float mt) {
+void display_min(double mt) {
   TV.set_cursor(0, 33);
   TV.select_font(font6x8);
-  if (mt < 10) TV.print(" ");
   TV.print(mt, 1);
 }
 
-void display_max(float mt) {
+void display_max(double mt) {
   TV.set_cursor(103, 33);
   TV.select_font(font6x8);
   if (mt < 10) TV.print(" ");
   TV.print(mt, 1);
 }
 
-void display_current(float t) {
+void display_current(double t) {
   TV.set_cursor(42, 32);
   TV.select_font(font8x8);
   TV.print(t, 2);
@@ -135,11 +148,11 @@ double scaleBetween(double num, double newMin, double newMax, double oldMin, dou
   return (oldMax - oldMin) * (num - newMin) / (newMax - newMin) + oldMin;
 }
 
-void renderGraph(float val, int min, int max) {
+void renderGraph(double val, int min, int max) {
   if (val > max) val = max;
   if (val < min) val = min;
 
-  int offsetLeft = 2;
+  int offsetLeft = 0;
   const int dcount = digitsCount(max);
 
   if (dcount > 4) {
@@ -154,16 +167,24 @@ void renderGraph(float val, int min, int max) {
     offsetLeft += 8;
   }
 
-  const int graphSize = TV.hres() - offsetLeft;
+  const int offsetTop = 48;
+  const int offsetBottom = TV.vres() - 8;
+  const int graphWidth = TV.hres() - offsetLeft;
+  const int graphHeight = offsetBottom - offsetTop;
 
-  for (int i = 0; i < graphSize; i++) {
+  for (int i = 0; i < graphWidth; i++) {
     graph[i] = graph[i + 1];
-    TV.set_pixel(i + offsetLeft, 88 - graph[i], 1);
-    if (graph[i + 1] > min)
-      TV.set_pixel(i + offsetLeft + 1, 88 - graph[i + 1], 0);
+    TV.set_pixel(i + offsetLeft, offsetBottom - graph[i], 1);
+    if (graph[i + 1] > 0) {
+      TV.set_pixel(i + offsetLeft + 1, offsetBottom - graph[i + 1], 0);
+    }
   }
 
-  graph[graphSize] = (byte)scaleBetween(val, min, max, 0, 40);
+  graph[graphWidth] = (byte) scaleBetween(val, min, max, 0, graphHeight);
+
+  if (graph[graphWidth] > graphHeight) {
+    graph[graphWidth] = graphHeight;
+  }
 }
 
 int digitsCount(long long n) { 
@@ -229,11 +250,7 @@ void renderInitialScreen(const char* label, int lower, int upper) {
   TV.draw_line(offsetLeft, 46, offsetLeft, 88, 1);
   TV.draw_line(offsetLeft, 88, 126, 88, 1);
   TV.set_pixel(offsetLeft - 1, 48, 1);
-  TV.set_pixel(offsetLeft + 1, 48, 1);
   TV.set_pixel(offsetLeft - 1, 58, 1);
-  TV.set_pixel(offsetLeft + 1, 58, 1);
   TV.set_pixel(offsetLeft - 1, 68, 1);
-  TV.set_pixel(offsetLeft + 1, 68, 1);
   TV.set_pixel(offsetLeft - 1, 78, 1);
-  TV.set_pixel(offsetLeft + 1, 78, 1);
 }
