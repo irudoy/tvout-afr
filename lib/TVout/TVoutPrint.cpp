@@ -290,11 +290,11 @@ void TVout::printFloat(double number, uint8_t digits)
   }
 
   // Round correctly so that print(1.999, 2) prints as "2.00"
-  double rounding = 0.5;
-  for (uint8_t i=0; i<digits; ++i)
-    rounding /= 10.0;
-  
-  number += rounding;
+  // Not working properly
+  // double rounding = 0.5;
+  // for (uint8_t i=0; i<digits; ++i)
+  //   rounding /= 10.0;
+  // number += rounding;
 
   // Extract the integer part of the number and print it
   unsigned long int_part = (unsigned long)number;
