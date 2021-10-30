@@ -1,6 +1,6 @@
 #include <TVout.h>
 #include <fontALL.h>
-#include <CAN.h>
+#include <EMUcan.h>
 
 /**
  * ### Microchip MCP2515 wiring
@@ -41,69 +41,196 @@
  * VIDEO - A7 (D29)
  */
 
-#define CAN_SPEED 500E3 // 1000E3 or 500E3 
+#define CAN_SPEED CAN_500KBPS
 #define CAN_SPI_CS_PIN 53
 #define DELAY_FRAMES 3
 #define GRAPH_MIN 5
 #define GRAPH_MAX 25
 
-#define DEBUG false
+#define DEBOUNCE_DELAY 1000
+
+#define AEM_CAN_AFR_ID 0x00000180
+
 #define DEBUG_GRAPH true
 
+int lastDebounceTime = 0;
+
+const char *AEM_AFR_STATE[21] = {
+  "RESET",
+  "WARM_UP",
+  "STABILIZE",
+  "READ_NERNST_PUMP",
+  "EQUALIZE",
+  "READ_RCAL",
+  "RUN",
+  "OVERHEAT",
+  "OVERCOOL",
+  "HEATER_SHORT",
+  "HEATER_OPEN",
+  "START_FAC",
+  "FAC",
+  "DETECT_SENSOR",
+  "READ_JUNCT",
+  "EVAP_STARTUP",
+  "SENSOR_TYPE",
+  "PREPARE_TO_RUN",
+  "SENSOR_SAVE",
+  "NEED_FAC",
+  "ERROR"
+};
+
+// DUMMY MSG FOR TEST
+struct can_frame dummyCanMsg;
+// DUMMY MSG FOR TEST
+
+EMUcan emucan(0x600, CAN_SPI_CS_PIN);
+
 TVout TV;
-double minAFR = 100, maxAFR = 0;
+double minAFR = 100.0;
+double maxAFR = 0.0;
+double prevAFR = 0.0; // FOR DEBUG
+double AFRValue = 0.0;
 byte graph[117] = { 0 };
-double currTemp = 1.0;
 
 int DEBUG_direction = 1;
 
 void setup()  {
+  // TV setup
   TV.begin(PAL, 128, 96);
   renderInitialScreen("AFR", GRAPH_MIN, GRAPH_MAX);
+
+  // Serial setup
   Serial.begin(9600);
   while (!Serial);
   Serial.println("CAN Init");
-  CAN.setPins(CAN_SPI_CS_PIN); // defaults to 10
-  if (!CAN.begin(CAN_SPEED)) {
-    Serial.println("Starting CAN failed!");
-    while (1);
-  }
+
+  // CAN Setup
+  emucan.begin(CAN_SPEED);
+  Serial.print("EMUCAN_LIB_VERSION: ");
+  Serial.println(EMUCAN_LIB_VERSION);
+  ReturnAllFramesFunction frameProcessFn = handleCANFrame;
+  emucan.ReturnAllFrames(frameProcessFn);
+  Serial.println("------- CAN Read ----------");
+
+
+
+
+  // DUMMY MSG FOR TEST
+  dummyCanMsg.can_id = 0x00000180;
+  dummyCanMsg.can_dlc = 8;
+  dummyCanMsg.data[0] = 0;
+  dummyCanMsg.data[1] = 0;
+  dummyCanMsg.data[2] = 0;
+  dummyCanMsg.data[3] = 0;
+  dummyCanMsg.data[4] = 0;
+  dummyCanMsg.data[5] = 0;
+  dummyCanMsg.data[6] = 0;
+  dummyCanMsg.data[7] = 0;
+  // DUMMY MSG FOR TEST
+
+
+  
+
   delay(1000);
 }
 
-void loop() {
-  double prevTemp = currTemp;
-  double val = 0.0;
+void handleCANFrame(const struct can_frame *frame) {
+//  Serial.print("CAN ID: ");
+//  Serial.print(frame->can_id, HEX); // print ID
+//  Serial.print("; CAN DLC: ");
+//  Serial.print(frame->can_dlc, HEX); // print DLC
+//  Serial.print("; CAN DATA: ");
+//  for (int i = 0; i < frame->can_dlc; i++)  { // print the data
+//    Serial.print(frame->data[i], HEX);
+//    Serial.print(", ");
+//  }
+//  Serial.println();
 
-  if (!DEBUG_GRAPH) {
-    val = readAFR();
-  } else {
-    double step = 0.1;
-    val = DEBUG_direction == 1 ? prevTemp + step : prevTemp - step;
-    if (prevTemp <= 4.0 && DEBUG_direction == 0) {
-      DEBUG_direction = 1;
-    } else if (prevTemp >= 26.0 && DEBUG_direction == 1) {
-      DEBUG_direction = 0;
+  if (frame->can_id == AEM_CAN_AFR_ID) {
+    double lambda = ((frame->data[1] << 8) + frame->data[0]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
+    double oxygen = ((frame->data[3] << 8) + frame->data[2]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
+    double sysVolts = frame->data[4] * 0.1; // System Volts
+    double htrVolts = frame->data[5] * 0.1; // Heater Volts
+    bool isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
+    bool isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
+    bool isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
+    bool isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
+    bool htrPIDLocked = frame->data[6] & 16; // Heater PID locked
+    bool usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
+    bool freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
+    bool lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
+    uint8_t sensorState = (frame->data[7] >> 3) & ((1 << 5) - 1); // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
+    bool sensorFault = frame->data[7] & 64; // Sensor Fault
+    bool fatalError = frame->data[7] & 128; // Fatal Error
+
+    if (false) {
+      Serial.print("AFR: "); Serial.print(lambda); Serial.print("; ");
+      Serial.print("Oxygen: "); Serial.print(oxygen); Serial.print("%; ");
+      Serial.print("System Volts: "); Serial.print(lambda); Serial.print("V; ");
+      Serial.print("Heater Volts: "); Serial.print(lambda); Serial.print("V; ");
+      Serial.print("is LSU4.2: "); Serial.print(isLSU42); Serial.print("; ");
+      Serial.print("is LSU4.9: "); Serial.print(isLSU49); Serial.print("; ");
+      Serial.print("is NTK L#H#: "); Serial.print(isNTKLH); Serial.print("; ");
+      Serial.print("is NTK LHA: "); Serial.print(isNTKLHA); Serial.print("; ");
+      Serial.print("Heater PID locked: "); Serial.print(htrPIDLocked); Serial.print("; ");
+      Serial.print("Using Free-Air Cal: "); Serial.print(usingFreeAirCal); Serial.print("; ");
+      Serial.print("Free-Air cal required: "); Serial.print(freeAirCalRequired); Serial.print("; ");
+      Serial.print("Lambda Data Valid: "); Serial.print(lambdaDataValid); Serial.print("; ");
+      Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[sensorState]); Serial.print("; ");
+      Serial.print("Sensor Fault: "); Serial.print(sensorFault); Serial.print("; ");
+      Serial.print("Fatal Error: "); Serial.print(fatalError); Serial.print("; ");
+      Serial.println();
     }
   }
+}
 
-  double currAFR = prevTemp;
+void loop() {
+  emucan.checkEMUcan();
 
-  if (val) {
-    currAFR = val;
-    currTemp = val;
+  const unsigned long tm = millis();
+  if ((tm - lastDebounceTime) > DEBOUNCE_DELAY) {
+    handleCANFrame(&dummyCanMsg);
+
+    // CAN DEBUG
+    uint8_t rxerrors = emucan.CanErrorCounter(false);
+    uint8_t txerrors = emucan.CanErrorCounter(true);
+    Serial.print("rx errs: ");
+    Serial.print(rxerrors);
+    Serial.print("; tx errs: ");
+    Serial.print(txerrors);
+    //retreive the mcp2515 object for direct access
+    MCP2515 mcp = *emucan.getMcp2515();
+    //call the getErrorFlags function from the mcp2515 lib:
+    uint8_t eflg = mcp.getErrorFlags();
+    Serial.print("; eflg register: ");
+    Serial.println(eflg);
+    // CAN DEBUG
+    
+    lastDebounceTime = tm;
+  }
+
+
+  if (DEBUG_GRAPH){
+    double step = 0.1;
+    AFRValue = DEBUG_direction == 1 ? prevAFR + step : prevAFR - step;
+    if (prevAFR <= 4.0 && DEBUG_direction == 0) {
+      DEBUG_direction = 1;
+    } else if (prevAFR >= 26.0 && DEBUG_direction == 1) {
+      DEBUG_direction = 0;
+    }
+    prevAFR = AFRValue;
   }
   
-  display_current(currAFR);
-  renderGraph(currAFR, GRAPH_MIN, GRAPH_MAX);
+  display_current(AFRValue);
+  renderGraph(AFRValue, GRAPH_MIN, GRAPH_MAX);
 
-  if (currAFR < minAFR && currAFR != -1) {
-    minAFR = currAFR;
+  if (AFRValue < minAFR && AFRValue != -1) {
+    minAFR = AFRValue;
     display_min(minAFR);
   }
 
-  if (currAFR > maxAFR) {
-    maxAFR = currAFR;
+  if (AFRValue >= maxAFR) {
+    maxAFR = AFRValue;
     display_max(maxAFR);
   }
 
@@ -128,20 +255,6 @@ void display_current(double t) {
   TV.select_font(font8x8);
   TV.print(t, 2);
   TV.draw_rect(40, 30, 44, 12, 1, -1);
-}
-
-double readAFR() {
-  int packetSize = CAN.parsePacket();
-  if (packetSize) {
-    Serial.print("Received packet with id 0x");
-    Serial.print(CAN.packetId(), HEX);
-    Serial.print(" and length ");
-    Serial.println(packetSize);
-
-    unsigned short int resTemp = (CAN.read() << 8) | CAN.read();
-    
-    return (double)resTemp / 100;
-  }
 }
 
 double scaleBetween(double num, double newMin, double newMax, double oldMin, double oldMax) {
