@@ -45,15 +45,13 @@
 #define CAN_SPI_CS_PIN 53
 #define DELAY_FRAMES 3
 #define GRAPH_MIN 5
-#define GRAPH_MAX 25
+#define GRAPH_MAX 20 // >= 10, need better scaleBetween impl
 
 #define DEBOUNCE_DELAY 1000
 
-#define AEM_CAN_AFR_ID 0x00000180
+#define AEM_CAN_AFR_ID 0x80000180
 
-#define DEBUG_GRAPH true
-
-int lastDebounceTime = 0;
+#define DEBUG_GRAPH false
 
 const char *AEM_AFR_STATE[21] = {
   "RESET",
@@ -79,24 +77,21 @@ const char *AEM_AFR_STATE[21] = {
   "ERROR"
 };
 
-// DUMMY MSG FOR TEST
-struct can_frame dummyCanMsg;
-// DUMMY MSG FOR TEST
-
 EMUcan emucan(0x600, CAN_SPI_CS_PIN);
-
 TVout TV;
+
 double minAFR = 100.0;
 double maxAFR = 0.0;
 double prevAFR = 0.0; // FOR DEBUG
 double AFRValue = 0.0;
+double AFRVoltage = 0.0;
 byte graph[117] = { 0 };
-
+int lastDebounceTime = 0;
 int DEBUG_direction = 1;
 
 void setup()  {
   // TV setup
-  TV.begin(PAL, 128, 96);
+  TV.begin(NTSC, 128, 96);
   renderInitialScreen("AFR", GRAPH_MIN, GRAPH_MAX);
 
   // Serial setup
@@ -105,82 +100,72 @@ void setup()  {
   Serial.println("CAN Init");
 
   // CAN Setup
-  emucan.begin(CAN_SPEED);
+  emucan.begin(CAN_SPEED, MCP_8MHZ);
   Serial.print("EMUCAN_LIB_VERSION: ");
   Serial.println(EMUCAN_LIB_VERSION);
   ReturnAllFramesFunction frameProcessFn = handleCANFrame;
   emucan.ReturnAllFrames(frameProcessFn);
   Serial.println("------- CAN Read ----------");
 
-
-
-
-  // DUMMY MSG FOR TEST
-  dummyCanMsg.can_id = 0x00000180;
-  dummyCanMsg.can_dlc = 8;
-  dummyCanMsg.data[0] = 0;
-  dummyCanMsg.data[1] = 0;
-  dummyCanMsg.data[2] = 0;
-  dummyCanMsg.data[3] = 0;
-  dummyCanMsg.data[4] = 0;
-  dummyCanMsg.data[5] = 0;
-  dummyCanMsg.data[6] = 0;
-  dummyCanMsg.data[7] = 0;
-  // DUMMY MSG FOR TEST
-
-
-  
-
   delay(1000);
 }
 
 void handleCANFrame(const struct can_frame *frame) {
-//  Serial.print("CAN ID: ");
-//  Serial.print(frame->can_id, HEX); // print ID
-//  Serial.print("; CAN DLC: ");
-//  Serial.print(frame->can_dlc, HEX); // print DLC
-//  Serial.print("; CAN DATA: ");
-//  for (int i = 0; i < frame->can_dlc; i++)  { // print the data
-//    Serial.print(frame->data[i], HEX);
-//    Serial.print(", ");
-//  }
-//  Serial.println();
-
-  if (frame->can_id == AEM_CAN_AFR_ID) {
-    double lambda = ((frame->data[1] << 8) + frame->data[0]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
-    double oxygen = ((frame->data[3] << 8) + frame->data[2]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
-    double sysVolts = frame->data[4] * 0.1; // System Volts
-    double htrVolts = frame->data[5] * 0.1; // Heater Volts
-    bool isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
-    bool isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
-    bool isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
-    bool isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
-    bool htrPIDLocked = frame->data[6] & 16; // Heater PID locked
-    bool usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
-    bool freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
-    bool lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
-    uint8_t sensorState = (frame->data[7] >> 3) & ((1 << 5) - 1); // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
-    bool sensorFault = frame->data[7] & 64; // Sensor Fault
-    bool fatalError = frame->data[7] & 128; // Fatal Error
-
+  const unsigned long tm = millis();
+  if (true || (tm - lastDebounceTime) > DEBOUNCE_DELAY) {
     if (false) {
-      Serial.print("AFR: "); Serial.print(lambda); Serial.print("; ");
-      Serial.print("Oxygen: "); Serial.print(oxygen); Serial.print("%; ");
-      Serial.print("System Volts: "); Serial.print(lambda); Serial.print("V; ");
-      Serial.print("Heater Volts: "); Serial.print(lambda); Serial.print("V; ");
-      Serial.print("is LSU4.2: "); Serial.print(isLSU42); Serial.print("; ");
-      Serial.print("is LSU4.9: "); Serial.print(isLSU49); Serial.print("; ");
-      Serial.print("is NTK L#H#: "); Serial.print(isNTKLH); Serial.print("; ");
-      Serial.print("is NTK LHA: "); Serial.print(isNTKLHA); Serial.print("; ");
-      Serial.print("Heater PID locked: "); Serial.print(htrPIDLocked); Serial.print("; ");
-      Serial.print("Using Free-Air Cal: "); Serial.print(usingFreeAirCal); Serial.print("; ");
-      Serial.print("Free-Air cal required: "); Serial.print(freeAirCalRequired); Serial.print("; ");
-      Serial.print("Lambda Data Valid: "); Serial.print(lambdaDataValid); Serial.print("; ");
-      Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[sensorState]); Serial.print("; ");
-      Serial.print("Sensor Fault: "); Serial.print(sensorFault); Serial.print("; ");
-      Serial.print("Fatal Error: "); Serial.print(fatalError); Serial.print("; ");
-      Serial.println();
+      Serial.print("CAN ID: ");
+      Serial.print(frame->can_id, HEX); // print ID
+      Serial.print("; CAN DLC: ");
+      Serial.print(frame->can_dlc, HEX); // print DLC
+      Serial.print("; CAN DATA: ");
+      for (int i = 0; i < frame->can_dlc; i++)  { // print the data
+        Serial.print(frame->data[i], HEX);
+        Serial.print(", ");
+      }
+      Serial.println();  
     }
+  
+    if (frame->can_id == AEM_CAN_AFR_ID) {
+      double lambda = ((frame->data[1] << 8) + frame->data[0]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
+      double oxygen = ((frame->data[3] << 8) + frame->data[2]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
+      double sysVolts = frame->data[4] * 0.1; // System Volts
+      double htrVolts = frame->data[5] * 0.1; // Heater Volts
+      bool isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
+      bool isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
+      bool isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
+      bool isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
+      bool htrPIDLocked = frame->data[6] & 16; // Heater PID locked
+      bool usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
+      bool freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
+      bool lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
+      uint8_t sensorState = (frame->data[7] >> 3) & ((1 << 5) - 1); // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
+      bool sensorFault = frame->data[7] & 64; // Sensor Fault
+      bool fatalError = frame->data[7] & 128; // Fatal Error
+
+      AFRVoltage = sysVolts;
+  
+      if (false) {
+        Serial.print("AFR: "); Serial.print(lambda); Serial.print("; ");
+        Serial.print("Oxygen: "); Serial.print(oxygen); Serial.print("%; ");
+        Serial.print("System Volts: "); Serial.print(sysVolts); Serial.print("V; ");
+        Serial.print("Heater Volts: "); Serial.print(htrVolts); Serial.print("V; ");
+        Serial.print("is LSU4.2: "); Serial.print(isLSU42); Serial.print("; ");
+        Serial.print("is LSU4.9: "); Serial.print(isLSU49); Serial.print("; ");
+        Serial.print("is NTK L#H#: "); Serial.print(isNTKLH); Serial.print("; ");
+        Serial.print("is NTK LHA: "); Serial.print(isNTKLHA); Serial.print("; ");
+        Serial.print("Heater PID locked: "); Serial.print(htrPIDLocked); Serial.print("; ");
+        Serial.print("Using Free-Air Cal: "); Serial.print(usingFreeAirCal); Serial.print("; ");
+        Serial.print("Free-Air cal required: "); Serial.print(freeAirCalRequired); Serial.print("; ");
+        Serial.print("Lambda Data Valid: "); Serial.print(lambdaDataValid); Serial.print("; ");
+        Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[sensorState]); Serial.print("; ");
+        Serial.print("Sensor Fault: "); Serial.print(sensorFault); Serial.print("; ");
+        Serial.print("Fatal Error: "); Serial.print(fatalError); Serial.print("; ");
+        Serial.println();
+      }
+    }
+
+    lastDebounceTime = tm;
   }
 }
 
@@ -188,8 +173,7 @@ void loop() {
   emucan.checkEMUcan();
 
   const unsigned long tm = millis();
-  if ((tm - lastDebounceTime) > DEBOUNCE_DELAY) {
-    handleCANFrame(&dummyCanMsg);
+  if (false && (tm - lastDebounceTime) > DEBOUNCE_DELAY) {
 
     // CAN DEBUG
     uint8_t rxerrors = emucan.CanErrorCounter(false);
@@ -213,12 +197,14 @@ void loop() {
   if (DEBUG_GRAPH){
     double step = 0.1;
     AFRValue = DEBUG_direction == 1 ? prevAFR + step : prevAFR - step;
-    if (prevAFR <= 4.0 && DEBUG_direction == 0) {
+    if (prevAFR <= GRAPH_MIN - 1 && DEBUG_direction == 0) {
       DEBUG_direction = 1;
-    } else if (prevAFR >= 26.0 && DEBUG_direction == 1) {
+    } else if (prevAFR >= GRAPH_MAX + 1 && DEBUG_direction == 1) {
       DEBUG_direction = 0;
     }
     prevAFR = AFRValue;
+  } else {
+    AFRValue = AFRVoltage;
   }
   
   display_current(AFRValue);
@@ -257,28 +243,11 @@ void display_current(double t) {
   TV.draw_rect(40, 30, 44, 12, 1, -1);
 }
 
-double scaleBetween(double num, double newMin, double newMax, double oldMin, double oldMax) {
-  return (oldMax - oldMin) * (num - newMin) / (newMax - newMin) + oldMin;
-}
-
 void renderGraph(double val, int min, int max) {
   if (val > max) val = max;
   if (val < min) val = min;
 
-  int offsetLeft = 0;
-  const int dcount = digitsCount(max);
-
-  if (dcount > 4) {
-    offsetLeft += 22;
-  } else if (dcount > 3) {
-    offsetLeft += 18;
-  } else if (dcount > 2) {
-    offsetLeft += 14;
-  } else if (dcount > 1) {
-    offsetLeft += 12;
-  } else {
-    offsetLeft += 8;
-  }
+  int offsetLeft = getOffsetLeft(min, max);
 
   const int offsetTop = 48;
   const int offsetBottom = TV.vres() - 8;
@@ -299,10 +268,6 @@ void renderGraph(double val, int min, int max) {
     graph[graphWidth] = graphHeight;
   }
 }
-
-int digitsCount(long long n) { 
-    return floor(log10(n) + 1); 
-} 
 
 void renderInitialScreen(const char* label, int lower, int upper) {
   const int labelGapX = upper > 10 ? 4 : 0;
@@ -337,6 +302,7 @@ void renderInitialScreen(const char* label, int lower, int upper) {
 
   TV.select_font(font4x6);
 
+  // TODO: align right
   int j = 86;
   for (int i = 0; i < ticks; i++) {
     int curr = steps[i];
@@ -345,20 +311,7 @@ void renderInitialScreen(const char* label, int lower, int upper) {
     j -= 10;
   }
 
-  int offsetLeft = labelGapX;
-  const int dcount = digitsCount(upper);
-
-  if (dcount > 4) {
-    offsetLeft += 20;
-  } else if (dcount > 3) {
-    offsetLeft += 16;
-  } else if (dcount > 2) {
-    offsetLeft += 12;
-  } else if (dcount > 1) {
-    offsetLeft += 8;
-  } else {
-    offsetLeft += 8;
-  }
+  int offsetLeft = getOffsetLeft(lower, upper);
 
   TV.draw_line(offsetLeft, 46, offsetLeft, 88, 1);
   TV.draw_line(offsetLeft, 88, 126, 88, 1);
@@ -366,4 +319,36 @@ void renderInitialScreen(const char* label, int lower, int upper) {
   TV.set_pixel(offsetLeft - 1, 58, 1);
   TV.set_pixel(offsetLeft - 1, 68, 1);
   TV.set_pixel(offsetLeft - 1, 78, 1);
+}
+
+/**
+ * Helpers
+ */
+
+double scaleBetween(double num, double newMin, double newMax, double oldMin, double oldMax) {
+  return (oldMax - oldMin) * (num - newMin) / (newMax - newMin) + oldMin;
+}
+
+int digitsCount(long n) { 
+    const int val = floor(log10(abs(n)) + 1);
+    return n < 0 ? val + 1 : val;
+}
+
+int getOffsetLeft(int lower, int upper) {
+  int val = 0;
+  const int dcountUpper = digitsCount(upper);
+  const int dcountLower = digitsCount(lower);
+  const int dcount = max(dcountUpper, dcountLower);
+  if (dcount > 4) {
+    val = 22;
+  } else if (dcount > 3) {
+    val = 18;
+  } else if (dcount > 2) {
+    val = 14;
+  } else if (dcount > 1) {
+    val = 12;
+  } else {
+    val = 8;
+  }
+  return val;
 }
