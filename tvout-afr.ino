@@ -1,6 +1,7 @@
 #include <TVout.h>
 #include <fontALL.h>
 #include <EMUcan.h>
+#include "./src/AemAFRData.h"
 
 /**
  * ### Microchip MCP2515 wiring
@@ -43,15 +44,24 @@
 
 #define CAN_SPEED CAN_500KBPS
 #define CAN_SPI_CS_PIN 53
+#define AEM_CAN_AFR_ID 0x80000180
 #define DELAY_FRAMES 3
-#define GRAPH_MIN 5
-#define GRAPH_MAX 20 // >= 10, need better scaleBetween impl
 
+#define USE_DEBOUNCE false
 #define DEBOUNCE_DELAY 1000
 
-#define AEM_CAN_AFR_ID 0x80000180
-
 #define DEBUG_GRAPH false
+#define DEBUG_CAN false
+#define DEBUG_CAN_AEMAFR false
+
+#define SCREEN_AFR 0
+#define SCREEN_OXYGEN 1
+#define SCREEN_SYS_VOLTS 2
+#define SCREEN_HTR_VOLTS 3
+#define MAX_SCREEN 3
+
+int currentScreen = -1;
+int nextScreen = SCREEN_AFR;
 
 const char *AEM_AFR_STATE[21] = {
   "RESET",
@@ -78,21 +88,32 @@ const char *AEM_AFR_STATE[21] = {
 };
 
 EMUcan emucan(0x600, CAN_SPI_CS_PIN);
+MCP2515 mcp = *emucan.getMcp2515();
 TVout TV;
 
-double minAFR = 100.0;
-double maxAFR = 0.0;
-double prevAFR = 0.0; // FOR DEBUG
-double AFRValue = 0.0;
-double AFRVoltage = 0.0;
-byte graph[117] = { 0 };
+struct AemAFRData *aemAFRData;
+
+// Graph State
+const char *graphStateLabel;
+double graphStateMinValue;
+double graphStateMaxValue;
+int graphStateLower;
+int graphStateUpper;
+byte graphStatePoints[117];
+// Graph State
+
+uint8_t canRXerrors;
+uint8_t canTXerrors;
+uint8_t canErrorFlags;
+
 int lastDebounceTime = 0;
+
 int DEBUG_direction = 1;
+double DEBUG_prevValue = 0.0;
 
 void setup()  {
   // TV setup
   TV.begin(NTSC, 128, 96);
-  renderInitialScreen("AFR", GRAPH_MIN, GRAPH_MAX);
 
   // Serial setup
   Serial.begin(9600);
@@ -111,9 +132,27 @@ void setup()  {
 }
 
 void handleCANFrame(const struct can_frame *frame) {
+  if (frame->can_id == AEM_CAN_AFR_ID) {
+    aemAFRData->lambda = ((frame->data[0] << 8) + frame->data[1]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
+    aemAFRData->oxygen = ((frame->data[2] << 8) + frame->data[3]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
+    aemAFRData->sysVolts = frame->data[4] * 0.1; // System Volts
+    aemAFRData->htrVolts = frame->data[5] * 0.1; // Heater Volts
+    aemAFRData->isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
+    aemAFRData->isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
+    aemAFRData->isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
+    aemAFRData->isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
+    aemAFRData->htrPIDLocked = frame->data[6] & 16; // Heater PID locked
+    aemAFRData->usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
+    aemAFRData->freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
+    aemAFRData->lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
+    aemAFRData->sensorState = frame->data[7] & 0x1F; // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
+    aemAFRData->sensorFault = frame->data[7] & 64; // Sensor Fault
+    aemAFRData->fatalError = frame->data[7] & 128; // Fatal Error
+  }
+
   const unsigned long tm = millis();
-  if (true || (tm - lastDebounceTime) > DEBOUNCE_DELAY) {
-    if (false) {
+  if ((tm - lastDebounceTime) > DEBOUNCE_DELAY || !USE_DEBOUNCE) {
+    if (DEBUG_CAN) {
       Serial.print("CAN ID: ");
       Serial.print(frame->can_id, HEX); // print ID
       Serial.print("; CAN DLC: ");
@@ -123,46 +162,32 @@ void handleCANFrame(const struct can_frame *frame) {
         Serial.print(frame->data[i], HEX);
         Serial.print(", ");
       }
-      Serial.println();  
+      Serial.println();
+      Serial.print("rx errs: ");
+      Serial.print(canRXerrors);
+      Serial.print("; tx errs: ");
+      Serial.print(canTXerrors);
+      Serial.print("; eflg register: ");
+      Serial.println(canErrorFlags);
     }
   
-    if (frame->can_id == AEM_CAN_AFR_ID) {
-      double lambda = ((frame->data[0] << 8) + frame->data[1]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
-      double oxygen = ((frame->data[2] << 8) + frame->data[3]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
-      double sysVolts = frame->data[4] * 0.1; // System Volts
-      double htrVolts = frame->data[5] * 0.1; // Heater Volts
-      bool isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
-      bool isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
-      bool isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
-      bool isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
-      bool htrPIDLocked = frame->data[6] & 16; // Heater PID locked
-      bool usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
-      bool freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
-      bool lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
-      uint8_t sensorState = frame->data[7] & 0x1F; // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
-      bool sensorFault = frame->data[7] & 64; // Sensor Fault
-      bool fatalError = frame->data[7] & 128; // Fatal Error
-
-      AFRValue = htrVolts;
-  
-      if (false) {
-        Serial.print("AFR: "); Serial.print(lambda); Serial.print("; ");
-        Serial.print("Oxygen: "); Serial.print(oxygen); Serial.print("%; ");
-        Serial.print("System Volts: "); Serial.print(sysVolts); Serial.print("V; ");
-        Serial.print("Heater Volts: "); Serial.print(htrVolts); Serial.print("V; ");
-        Serial.print("is LSU4.2: "); Serial.print(isLSU42); Serial.print("; ");
-        Serial.print("is LSU4.9: "); Serial.print(isLSU49); Serial.print("; ");
-        Serial.print("is NTK L#H#: "); Serial.print(isNTKLH); Serial.print("; ");
-        Serial.print("is NTK LHA: "); Serial.print(isNTKLHA); Serial.print("; ");
-        Serial.print("Heater PID locked: "); Serial.print(htrPIDLocked); Serial.print("; ");
-        Serial.print("Using Free-Air Cal: "); Serial.print(usingFreeAirCal); Serial.print("; ");
-        Serial.print("Free-Air cal required: "); Serial.print(freeAirCalRequired); Serial.print("; ");
-        Serial.print("Lambda Data Valid: "); Serial.print(lambdaDataValid); Serial.print("; ");
-        Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[sensorState]); Serial.print("; ");
-        Serial.print("Sensor Fault: "); Serial.print(sensorFault); Serial.print("; ");
-        Serial.print("Fatal Error: "); Serial.print(fatalError); Serial.print("; ");
-        Serial.println();
-      }
+    if (DEBUG_CAN_AEMAFR && frame->can_id == AEM_CAN_AFR_ID) {
+      Serial.print("AFR: "); Serial.print(aemAFRData->lambda); Serial.print("; ");
+      Serial.print("Oxygen: "); Serial.print(aemAFRData->oxygen); Serial.print("%; ");
+      Serial.print("System Volts: "); Serial.print(aemAFRData->sysVolts); Serial.print("V; ");
+      Serial.print("Heater Volts: "); Serial.print(aemAFRData->htrVolts); Serial.print("V; ");
+      Serial.print("is LSU4.2: "); Serial.print(aemAFRData->isLSU42); Serial.print("; ");
+      Serial.print("is LSU4.9: "); Serial.print(aemAFRData->isLSU49); Serial.print("; ");
+      Serial.print("is NTK L#H#: "); Serial.print(aemAFRData->isNTKLH); Serial.print("; ");
+      Serial.print("is NTK LHA: "); Serial.print(aemAFRData->isNTKLHA); Serial.print("; ");
+      Serial.print("Heater PID locked: "); Serial.print(aemAFRData->htrPIDLocked); Serial.print("; ");
+      Serial.print("Using Free-Air Cal: "); Serial.print(aemAFRData->usingFreeAirCal); Serial.print("; ");
+      Serial.print("Free-Air cal required: "); Serial.print(aemAFRData->freeAirCalRequired); Serial.print("; ");
+      Serial.print("Lambda Data Valid: "); Serial.print(aemAFRData->lambdaDataValid); Serial.print("; ");
+      Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[aemAFRData->sensorState]); Serial.print("; ");
+      Serial.print("Sensor Fault: "); Serial.print(aemAFRData->sensorFault); Serial.print("; ");
+      Serial.print("Fatal Error: "); Serial.print(aemAFRData->fatalError); Serial.print("; ");
+      Serial.println();
     }
 
     lastDebounceTime = tm;
@@ -172,75 +197,97 @@ void handleCANFrame(const struct can_frame *frame) {
 void loop() {
   emucan.checkEMUcan();
 
-  const unsigned long tm = millis();
-  if (false && (tm - lastDebounceTime) > DEBOUNCE_DELAY) {
-
-    // CAN DEBUG
-    uint8_t rxerrors = emucan.CanErrorCounter(false);
-    uint8_t txerrors = emucan.CanErrorCounter(true);
-    Serial.print("rx errs: ");
-    Serial.print(rxerrors);
-    Serial.print("; tx errs: ");
-    Serial.print(txerrors);
-    //retreive the mcp2515 object for direct access
-    MCP2515 mcp = *emucan.getMcp2515();
-    //call the getErrorFlags function from the mcp2515 lib:
-    uint8_t eflg = mcp.getErrorFlags();
-    Serial.print("; eflg register: ");
-    Serial.println(eflg);
-    // CAN DEBUG
-    
-    lastDebounceTime = tm;
+  if (DEBUG_CAN) {
+    canRXerrors = emucan.CanErrorCounter(false);
+    canTXerrors = emucan.CanErrorCounter(true);
+    canErrorFlags = mcp.getErrorFlags();
   }
 
+  if (Serial.available()) {
+    Serial.read();
+    nextScreen++;
+    if (nextScreen > MAX_SCREEN) nextScreen = 0;
+  }
 
-  if (DEBUG_GRAPH){
-    double step = 0.1;
-    AFRValue = DEBUG_direction == 1 ? prevAFR + step : prevAFR - step;
-    if (prevAFR <= GRAPH_MIN - 1 && DEBUG_direction == 0) {
-      DEBUG_direction = 1;
-    } else if (prevAFR >= GRAPH_MAX + 1 && DEBUG_direction == 1) {
-      DEBUG_direction = 0;
+  /**
+   * Setup static UI elements only once, after screen change
+   */
+  if (currentScreen != nextScreen) {
+    currentScreen = nextScreen;
+    switch (nextScreen) {
+      case SCREEN_AFR:
+        resetGraphState("AFR", aemAFRData->lambda, 5, 25);
+        renderGraphUI();
+        break;
+      case SCREEN_OXYGEN:
+        resetGraphState("OXYGEN", aemAFRData->oxygen, -33, 33);
+        renderGraphUI();
+        break;
+      case SCREEN_SYS_VOLTS:
+        resetGraphState("SYS VOLTS", aemAFRData->sysVolts, 0, 12);
+        renderGraphUI();
+        break;
+      case SCREEN_HTR_VOLTS:
+        resetGraphState("HTR VOLTS", aemAFRData->htrVolts, 0, 12);
+        renderGraphUI();
+        break;
+      default:
+        break;
     }
-    prevAFR = AFRValue;
-  } else {
-//    AFRValue = AFRVoltage;
-  }
-  
-  display_current(AFRValue);
-  renderGraph(AFRValue, GRAPH_MIN, GRAPH_MAX);
-
-  if (AFRValue < minAFR && AFRValue != -1) {
-    minAFR = AFRValue;
-    display_min(minAFR);
   }
 
-  if (AFRValue >= maxAFR) {
-    maxAFR = AFRValue;
-    display_max(maxAFR);
+  /**
+   * Update dynamic screen data
+   */
+  switch (currentScreen) {
+    case SCREEN_AFR:
+      renderGraphView(aemAFRData->lambda);
+      break;
+    case SCREEN_OXYGEN:
+      renderGraphView(aemAFRData->oxygen);
+      break;
+    case SCREEN_SYS_VOLTS:
+      renderGraphView(aemAFRData->sysVolts);
+      break;
+    case SCREEN_HTR_VOLTS:
+      renderGraphView(aemAFRData->htrVolts);
+      break;
+    default:
+      break;
   }
 
   TV.delay_frame(DELAY_FRAMES);
 }
 
-void display_min(double mt) {
-  TV.set_cursor(0, 33);
-  TV.select_font(font6x8);
-  TV.print(mt, 1);
-}
-
-void display_max(double mt) {
-  TV.set_cursor(103, 33);
-  TV.select_font(font6x8);
-  if (mt < 10) TV.print(" ");
-  TV.print(mt, 1);
-}
-
-void display_current(double t) {
+void renderGraphView(double value) {
+  if (DEBUG_GRAPH) {
+    double step = 0.8;
+    value = DEBUG_direction == 1 ? DEBUG_prevValue + step : DEBUG_prevValue - step;
+    if (DEBUG_prevValue <= graphStateLower - 1 && DEBUG_direction == 0) {
+      DEBUG_direction = 1;
+    } else if (DEBUG_prevValue >= graphStateUpper + 1 && DEBUG_direction == 1) {
+      DEBUG_direction = 0;
+    }
+    DEBUG_prevValue = value;
+  }
+  
+  renderGraph(value, graphStateLower, graphStateUpper);
+  
   TV.set_cursor(42, 32);
   TV.select_font(font8x8);
-  TV.print(t, 2);
+  TV.print(value, 2);
   TV.draw_rect(40, 30, 44, 12, 1, -1);
+
+  if (value < graphStateMinValue) graphStateMinValue = value;
+  TV.set_cursor(0, 33);
+  TV.select_font(font6x8);
+  TV.print(graphStateMinValue, 1);
+
+  if (value > graphStateMaxValue) graphStateMaxValue = value;
+  TV.set_cursor(103, 33);
+  TV.select_font(font6x8);
+  if (graphStateMaxValue < 10) TV.print(" ");
+  TV.print(graphStateMaxValue, 1);
 }
 
 void renderGraph(double val, int min, int max) {
@@ -255,40 +302,40 @@ void renderGraph(double val, int min, int max) {
   const int graphHeight = offsetBottom - offsetTop;
 
   for (int i = 0; i < graphWidth; i++) {
-    graph[i] = graph[i + 1];
-    TV.set_pixel(i + offsetLeft, offsetBottom - graph[i], 1);
-    if (graph[i + 1] > 0) {
-      TV.set_pixel(i + offsetLeft + 1, offsetBottom - graph[i + 1], 0);
+    graphStatePoints[i] = graphStatePoints[i + 1];
+    TV.set_pixel(i + offsetLeft, offsetBottom - graphStatePoints[i], 1);
+    if (graphStatePoints[i + 1] > 0) {
+      TV.set_pixel(i + offsetLeft + 1, offsetBottom - graphStatePoints[i + 1], 0);
     }
   }
 
-  graph[graphWidth] = (byte) scaleBetween(val, min, max, 0, graphHeight);
+  graphStatePoints[graphWidth] = (byte) scaleBetween(val, min, max, 0, graphHeight);
 
-  if (graph[graphWidth] > graphHeight) {
-    graph[graphWidth] = graphHeight;
+  if (graphStatePoints[graphWidth] > graphHeight) {
+    graphStatePoints[graphWidth] = graphHeight;
   }
 }
 
-void renderInitialScreen(const char* label, int lower, int upper) {
-  const int labelGapX = upper > 10 ? 4 : 0;
+void renderGraphUI() {
+  const int labelGapX = graphStateUpper > 10 ? 4 : 0;
 
   const int ticks = 5;
   int steps [ticks];
-  const int span = upper - lower;
+  const int span = graphStateUpper - graphStateLower;
   const double step = span / (ticks - 1);
 
   for (int i = 0; i < ticks; i++) {
-    steps[i] = lower + (int)floor(step * i);
-    if (i == 0) steps[i] = lower;
-    if (i == ticks - 1) steps[i] = upper;
+    steps[i] = graphStateLower + (int)floor(step * i);
+    if (i == 0) steps[i] = graphStateLower;
+    if (i == ticks - 1) steps[i] = graphStateUpper;
   }
 
   TV.clear_screen();
 
   TV.set_cursor(labelGapX, 1);
   TV.select_font(font8x8);
-  TV.print(label);
-  TV.draw_rect(0, 0, (strlen(label) * 8) + labelGapX * 2, 10, 1, 2);
+  TV.print(graphStateLabel);
+  TV.draw_rect(0, 0, (strlen(graphStateLabel) * 8) + labelGapX * 2, 10, 1, 2);
 
   TV.select_font(font6x8);
   TV.set_cursor(0, 20);
@@ -311,7 +358,7 @@ void renderInitialScreen(const char* label, int lower, int upper) {
     j -= 10;
   }
 
-  int offsetLeft = getOffsetLeft(lower, upper);
+  int offsetLeft = getOffsetLeft(graphStateLower, graphStateUpper);
 
   TV.draw_line(offsetLeft, 46, offsetLeft, 88, 1);
   TV.draw_line(offsetLeft, 88, 126, 88, 1);
@@ -319,6 +366,15 @@ void renderInitialScreen(const char* label, int lower, int upper) {
   TV.set_pixel(offsetLeft - 1, 58, 1);
   TV.set_pixel(offsetLeft - 1, 68, 1);
   TV.set_pixel(offsetLeft - 1, 78, 1);
+}
+
+void resetGraphState(const char *label, double value, int lower, int upper) {
+  graphStateLabel = label;
+  graphStateMinValue = value;
+  graphStateMaxValue = value;
+  graphStateLower = lower;
+  graphStateUpper = upper;
+  memset(graphStatePoints, 0, sizeof(graphStatePoints));
 }
 
 /**
