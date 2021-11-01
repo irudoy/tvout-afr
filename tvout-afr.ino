@@ -127,8 +127,8 @@ void handleCANFrame(const struct can_frame *frame) {
     }
   
     if (frame->can_id == AEM_CAN_AFR_ID) {
-      double lambda = ((frame->data[1] << 8) + frame->data[0]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
-      double oxygen = ((frame->data[3] << 8) + frame->data[2]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
+      double lambda = ((frame->data[0] << 8) + frame->data[1]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
+      double oxygen = ((frame->data[2] << 8) + frame->data[3]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
       double sysVolts = frame->data[4] * 0.1; // System Volts
       double htrVolts = frame->data[5] * 0.1; // Heater Volts
       bool isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
@@ -139,11 +139,11 @@ void handleCANFrame(const struct can_frame *frame) {
       bool usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
       bool freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
       bool lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
-      uint8_t sensorState = (frame->data[7] >> 3) & ((1 << 5) - 1); // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
+      uint8_t sensorState = frame->data[7] & 0x1F; // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
       bool sensorFault = frame->data[7] & 64; // Sensor Fault
       bool fatalError = frame->data[7] & 128; // Fatal Error
 
-      AFRVoltage = sysVolts;
+      AFRValue = htrVolts;
   
       if (false) {
         Serial.print("AFR: "); Serial.print(lambda); Serial.print("; ");
@@ -204,7 +204,7 @@ void loop() {
     }
     prevAFR = AFRValue;
   } else {
-    AFRValue = AFRVoltage;
+//    AFRValue = AFRVoltage;
   }
   
   display_current(AFRValue);
