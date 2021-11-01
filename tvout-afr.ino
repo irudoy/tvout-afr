@@ -54,14 +54,17 @@
 #define DEBUG_CAN false
 #define DEBUG_CAN_AEMAFR false
 
+// SCREENS
 #define SCREEN_AFR 0
 #define SCREEN_OXYGEN 1
 #define SCREEN_SYS_VOLTS 2
 #define SCREEN_HTR_VOLTS 3
-#define MAX_SCREEN 3
+#define SCREEN_SUMMARY 4
+#define MAX_SCREEN 4
+// SCREENS
 
 int currentScreen = -1;
-int nextScreen = SCREEN_AFR;
+int nextScreen = SCREEN_SUMMARY; // Default Screen
 
 const char *AEM_AFR_STATE[21] = {
   "RESET",
@@ -231,6 +234,9 @@ void loop() {
         resetGraphState("HTR VOLTS", aemAFRData->htrVolts, 0, 12);
         renderGraphUI();
         break;
+      case SCREEN_SUMMARY:
+        renderSummaryUI();
+        break;
       default:
         break;
     }
@@ -252,11 +258,94 @@ void loop() {
     case SCREEN_HTR_VOLTS:
       renderGraphView(aemAFRData->htrVolts);
       break;
+    case SCREEN_SUMMARY:
+      renderSummaryData();
+      break;
     default:
       break;
   }
 
   TV.delay_frame(DELAY_FRAMES);
+}
+
+void renderSummaryUI() {
+  TV.clear_screen();
+
+  TV.select_font(font4x6);
+
+  const int vgap = 3;
+  const int fvsz = 6;
+
+  TV.set_cursor(0, 0);
+  TV.print("AFR/OXYGEN ");
+  TV.set_cursor(0, (vgap + fvsz) * 1);
+  TV.print("SYSTEM VOLTAGE");
+  TV.set_cursor(0, (vgap + fvsz) * 2);
+  TV.print("HEATER VOLTAGE");
+  TV.set_cursor(0, (vgap + fvsz) * 3);
+  TV.print("SENSOR TYPE");
+  TV.set_cursor(0, (vgap + fvsz) * 4);
+  TV.print("HEATER PID LOCKED");
+  TV.set_cursor(0, (vgap + fvsz) * 5);
+  TV.print("USING FREE-AIR CAL");
+  TV.set_cursor(0, (vgap + fvsz) * 6);
+  TV.print("FREE-AIR CAL REQ ");
+  TV.set_cursor(0, (vgap + fvsz) * 7);
+  TV.print("LAMBDA DATA VALID");
+  TV.set_cursor(0, (vgap + fvsz) * 8);
+  TV.print("SENSOR STATE");
+  TV.set_cursor(0, (vgap + fvsz) * 9);
+  TV.print("SENSOR FAULT");
+  TV.set_cursor(0, (vgap + fvsz) * 10);
+  TV.print("FATAL ERROR ");
+}
+
+void renderSummaryData() {
+  TV.select_font(font4x6);
+
+  const int xpos = 100;
+  const int vgap = 3;
+  const int fvsz = 6;
+
+  TV.set_cursor(xpos - 35, 0);
+  TV.print(aemAFRData->lambda);
+  TV.set_cursor(xpos - 15, 0);
+  TV.print(" / ");
+  TV.set_cursor(xpos, 0);
+  TV.print(aemAFRData->oxygen);
+
+  TV.set_cursor(xpos, (vgap + fvsz) * 1);
+  TV.print(aemAFRData->sysVolts);
+  TV.set_cursor(xpos, (vgap + fvsz) * 2);
+  TV.print(aemAFRData->htrVolts);
+
+  TV.set_cursor(xpos, (vgap + fvsz) * 3);
+  if (aemAFRData->isLSU42) {
+    TV.print("LSU4.2");
+  } else if (aemAFRData->isLSU49) {
+    TV.print("LSU4.9");
+  } else if (aemAFRData->isNTKLH) {
+    TV.print("NTKLH");
+  } else if (aemAFRData->isNTKLHA) {
+    TV.print("NTKLHA");
+  } else  {
+    TV.print("N/C");
+  }
+
+  TV.set_cursor(xpos, (vgap + fvsz) * 4);
+  TV.print(aemAFRData->htrPIDLocked ? "YES" : "NO");
+  TV.set_cursor(xpos, (vgap + fvsz) * 5);
+  TV.print(aemAFRData->usingFreeAirCal ? "YES" : "NO");
+  TV.set_cursor(xpos, (vgap + fvsz) * 6);
+  TV.print(aemAFRData->freeAirCalRequired ? "YES" : "NO");
+  TV.set_cursor(xpos, (vgap + fvsz) * 7);
+  TV.print(aemAFRData->lambdaDataValid ? "YES" : "NO");
+  TV.set_cursor(xpos, (vgap + fvsz) * 8);
+  TV.print(AEM_AFR_STATE[aemAFRData->sensorState]);
+  TV.set_cursor(xpos, (vgap + fvsz) * 9);
+  TV.print(aemAFRData->sensorFault ? "YES" : "NO");
+  TV.set_cursor(xpos, (vgap + fvsz) * 10);
+  TV.print(aemAFRData->fatalError ? "YES" : "NO");
 }
 
 void renderGraphView(double value) {
@@ -317,6 +406,8 @@ void renderGraph(double val, int min, int max) {
 }
 
 void renderGraphUI() {
+  TV.clear_screen();
+
   const int labelGapX = graphStateUpper > 10 ? 4 : 0;
 
   const int ticks = 5;
@@ -329,8 +420,6 @@ void renderGraphUI() {
     if (i == 0) steps[i] = graphStateLower;
     if (i == ticks - 1) steps[i] = graphStateUpper;
   }
-
-  TV.clear_screen();
 
   TV.set_cursor(labelGapX, 1);
   TV.select_font(font8x8);
