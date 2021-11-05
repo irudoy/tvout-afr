@@ -114,6 +114,12 @@ int lastDebounceTime = 0;
 int DEBUG_direction = 1;
 double DEBUG_prevValue = 0.0;
 
+int freeRam () {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}
+
 void setup()  {
   // TV setup
   TV.begin(NTSC, 128, 96);
