@@ -1,7 +1,6 @@
 #include <TVout.h>
 #include <fontALL.h>
 #include <EMUcan.h>
-#include "./src/AemAFRData.h"
 
 /**
  * ### Microchip MCP2515 wiring
@@ -51,6 +50,7 @@
 #define DEBOUNCE_DELAY 1000
 
 #define DEBUG_GRAPH false
+#define DEBUG_SUMMARY false
 #define DEBUG_CAN false
 #define DEBUG_CAN_AEMAFR false
 
@@ -66,35 +66,53 @@
 int currentScreen = -1;
 int nextScreen = SCREEN_SUMMARY; // Default Screen
 
+typedef struct aemafrdata {
+  double lambda; // 0 to 96.0088 AFR
+  double oxygen; // -32.768% to 32.767%
+  double sysVolts; // System Volts
+  double htrVolts; // Heater Volts
+  bool isLSU42; // Bosch LSU4.2 Sensor Detected
+  bool isLSU49; // Bosch LSU4.9 Sensor Detected
+  bool isNTKLH; // NTK L#H# Sensor Detected
+  bool isNTKLHA; // NTK LHA Sensor Detected
+  bool htrPIDLocked; // Heater PID locked
+  bool usingFreeAirCal; // Using Free-Air Cal
+  bool freeAirCalRequired; // Free-Air cal required
+  bool lambdaDataValid; // Lambda Data Valid
+  uint8_t sensorState; // Sensor State ; 5 bit unsigned
+  bool sensorFault; // Sensor Fault
+  bool fatalError; // Fatal Error
+} AemAFRData;
+
 const char *AEM_AFR_STATE[21] = {
-  "RESET",
-  "WARM_UP",
-  "STABILIZE",
-  "READ_NERNST_PUMP",
-  "EQUALIZE",
-  "READ_RCAL",
-  "RUN",
-  "OVERHEAT",
-  "OVERCOOL",
-  "HEATER_SHORT",
-  "HEATER_OPEN",
-  "START_FAC",
-  "FAC",
-  "DETECT_SENSOR",
-  "READ_JUNCT",
-  "EVAP_STARTUP",
-  "SENSOR_TYPE",
-  "PREPARE_TO_RUN",
-  "SENSOR_SAVE",
-  "NEED_FAC",
-  "ERROR"
+  "RESET ",
+  "WRMUP ",
+  "STBLZ ",
+  "RDNPM ",
+  "EQLZE ",
+  "RDRCL ",
+  "RUN   ",
+  "OVRHT ",
+  "OVRCL ",
+  "HTRSH ",
+  "HTROP ",
+  "STFAC ",
+  "FAC   ",
+  "DTSEN ",
+  "RDJNC ",
+  "EVSTR ",
+  "SNSTP ",
+  "PRTRN ",
+  "SENSV ",
+  "NDFAC ",
+  "ERROR "
 };
 
 EMUcan emucan(0x600, CAN_SPI_CS_PIN);
 MCP2515 mcp = *emucan.getMcp2515();
 TVout TV;
 
-struct AemAFRData *aemAFRData;
+AemAFRData aemAFRData;
 
 // Graph State
 const char *graphStateLabel;
@@ -110,9 +128,16 @@ uint8_t canTXerrors;
 uint8_t canErrorFlags;
 
 int lastDebounceTime = 0;
+int lastDebounceTime2 = 0;
 
-int DEBUG_direction = 1;
+uint8_t DEBUG_direction = 1;
 double DEBUG_prevValue = 0.0;
+bool DEBUG_d1 = true;
+bool DEBUG_d2 = true;
+bool DEBUG_d3 = true;
+bool DEBUG_d4 = true;
+uint8_t DEBUG_d5 = 0;
+uint8_t DEBUG_d6 = 0;
 
 int freeRam () {
   extern int __heap_start, *__brkval;
@@ -142,21 +167,21 @@ void setup()  {
 
 void handleCANFrame(const struct can_frame *frame) {
   if (frame->can_id == AEM_CAN_AFR_ID) {
-    aemAFRData->lambda = ((frame->data[0] << 8) + frame->data[1]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
-    aemAFRData->oxygen = ((frame->data[2] << 8) + frame->data[3]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
-    aemAFRData->sysVolts = frame->data[4] * 0.1; // System Volts
-    aemAFRData->htrVolts = frame->data[5] * 0.1; // Heater Volts
-    aemAFRData->isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
-    aemAFRData->isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
-    aemAFRData->isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
-    aemAFRData->isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
-    aemAFRData->htrPIDLocked = frame->data[6] & 16; // Heater PID locked
-    aemAFRData->usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
-    aemAFRData->freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
-    aemAFRData->lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
-    aemAFRData->sensorState = frame->data[7] & 0x1F; // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
-    aemAFRData->sensorFault = frame->data[7] & 64; // Sensor Fault
-    aemAFRData->fatalError = frame->data[7] & 128; // Fatal Error
+    aemAFRData.lambda = ((frame->data[0] << 8) + frame->data[1]) * 0.001465; // .001465 AFR/bit ; range 0 to 96.0088 AFR
+    aemAFRData.oxygen = ((frame->data[2] << 8) + frame->data[3]) * 0.001; // 0.001%/bit ; -32.768% to 32.767%
+    aemAFRData.sysVolts = frame->data[4] * 0.1; // System Volts
+    aemAFRData.htrVolts = frame->data[5] * 0.1; // Heater Volts
+    aemAFRData.isLSU42 = frame->data[6] & 0; // Bosch LSU4.2 Sensor Detected
+    aemAFRData.isLSU49 = frame->data[6] & 2; // Bosch LSU4.9 Sensor Detected
+    aemAFRData.isNTKLH = frame->data[6] & 4; // NTK L#H# Sensor Detected
+    aemAFRData.isNTKLHA = frame->data[6] & 8; // NTK LHA Sensor Detected
+    aemAFRData.htrPIDLocked = frame->data[6] & 16; // Heater PID locked
+    aemAFRData.usingFreeAirCal = frame->data[6] & 32; // Using Free-Air Cal
+    aemAFRData.freeAirCalRequired = frame->data[6] & 64; // Free-Air cal required
+    aemAFRData.lambdaDataValid = frame->data[6] & 128; // Lambda Data Valid
+    aemAFRData.sensorState = frame->data[7] & 0x1F; // Sensor State ; 5 bit unsigned ; enum AFR_SENSOR_STATE
+    aemAFRData.sensorFault = frame->data[7] & 64; // Sensor Fault
+    aemAFRData.fatalError = frame->data[7] & 128; // Fatal Error
   }
 
   const unsigned long tm = millis();
@@ -181,21 +206,21 @@ void handleCANFrame(const struct can_frame *frame) {
     }
   
     if (DEBUG_CAN_AEMAFR && frame->can_id == AEM_CAN_AFR_ID) {
-      Serial.print("AFR: "); Serial.print(aemAFRData->lambda); Serial.print("; ");
-      Serial.print("Oxygen: "); Serial.print(aemAFRData->oxygen); Serial.print("%; ");
-      Serial.print("System Volts: "); Serial.print(aemAFRData->sysVolts); Serial.print("V; ");
-      Serial.print("Heater Volts: "); Serial.print(aemAFRData->htrVolts); Serial.print("V; ");
-      Serial.print("is LSU4.2: "); Serial.print(aemAFRData->isLSU42); Serial.print("; ");
-      Serial.print("is LSU4.9: "); Serial.print(aemAFRData->isLSU49); Serial.print("; ");
-      Serial.print("is NTK L#H#: "); Serial.print(aemAFRData->isNTKLH); Serial.print("; ");
-      Serial.print("is NTK LHA: "); Serial.print(aemAFRData->isNTKLHA); Serial.print("; ");
-      Serial.print("Heater PID locked: "); Serial.print(aemAFRData->htrPIDLocked); Serial.print("; ");
-      Serial.print("Using Free-Air Cal: "); Serial.print(aemAFRData->usingFreeAirCal); Serial.print("; ");
-      Serial.print("Free-Air cal required: "); Serial.print(aemAFRData->freeAirCalRequired); Serial.print("; ");
-      Serial.print("Lambda Data Valid: "); Serial.print(aemAFRData->lambdaDataValid); Serial.print("; ");
-      Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[aemAFRData->sensorState]); Serial.print("; ");
-      Serial.print("Sensor Fault: "); Serial.print(aemAFRData->sensorFault); Serial.print("; ");
-      Serial.print("Fatal Error: "); Serial.print(aemAFRData->fatalError); Serial.print("; ");
+      Serial.print("AFR: "); Serial.print(aemAFRData.lambda); Serial.print("; ");
+      Serial.print("Oxygen: "); Serial.print(aemAFRData.oxygen); Serial.print("%; ");
+      Serial.print("System Volts: "); Serial.print(aemAFRData.sysVolts); Serial.print("V; ");
+      Serial.print("Heater Volts: "); Serial.print(aemAFRData.htrVolts); Serial.print("V; ");
+      Serial.print("is LSU4.2: "); Serial.print(aemAFRData.isLSU42); Serial.print("; ");
+      Serial.print("is LSU4.9: "); Serial.print(aemAFRData.isLSU49); Serial.print("; ");
+      Serial.print("is NTK L#H#: "); Serial.print(aemAFRData.isNTKLH); Serial.print("; ");
+      Serial.print("is NTK LHA: "); Serial.print(aemAFRData.isNTKLHA); Serial.print("; ");
+      Serial.print("Heater PID locked: "); Serial.print(aemAFRData.htrPIDLocked); Serial.print("; ");
+      Serial.print("Using Free-Air Cal: "); Serial.print(aemAFRData.usingFreeAirCal); Serial.print("; ");
+      Serial.print("Free-Air cal required: "); Serial.print(aemAFRData.freeAirCalRequired); Serial.print("; ");
+      Serial.print("Lambda Data Valid: "); Serial.print(aemAFRData.lambdaDataValid); Serial.print("; ");
+      Serial.print("Sensor State: "); Serial.print(AEM_AFR_STATE[aemAFRData.sensorState]); Serial.print("; ");
+      Serial.print("Sensor Fault: "); Serial.print(aemAFRData.sensorFault); Serial.print("; ");
+      Serial.print("Fatal Error: "); Serial.print(aemAFRData.fatalError); Serial.print("; ");
       Serial.println();
     }
 
@@ -205,6 +230,8 @@ void handleCANFrame(const struct can_frame *frame) {
 
 void loop() {
   emucan.checkEMUcan();
+
+  if (DEBUG_SUMMARY) DEBUG_loopSummary();
 
   if (DEBUG_CAN) {
     canRXerrors = emucan.CanErrorCounter(false);
@@ -225,19 +252,19 @@ void loop() {
     currentScreen = nextScreen;
     switch (nextScreen) {
       case SCREEN_AFR:
-        resetGraphState("AFR", aemAFRData->lambda, 5, 25);
+        resetGraphState("AFR", aemAFRData.lambda, 5, 25);
         renderGraphUI();
         break;
       case SCREEN_OXYGEN:
-        resetGraphState("OXYGEN", aemAFRData->oxygen, -33, 33);
+        resetGraphState("OXYGEN", aemAFRData.oxygen, -33, 33);
         renderGraphUI();
         break;
       case SCREEN_SYS_VOLTS:
-        resetGraphState("SYS VOLTS", aemAFRData->sysVolts, 0, 12);
+        resetGraphState("SYS VOLTS", aemAFRData.sysVolts, 0, 12);
         renderGraphUI();
         break;
       case SCREEN_HTR_VOLTS:
-        resetGraphState("HTR VOLTS", aemAFRData->htrVolts, 0, 12);
+        resetGraphState("HTR VOLTS", aemAFRData.htrVolts, 0, 12);
         renderGraphUI();
         break;
       case SCREEN_SUMMARY:
@@ -253,16 +280,16 @@ void loop() {
    */
   switch (currentScreen) {
     case SCREEN_AFR:
-      renderGraphView(aemAFRData->lambda);
+      renderGraphView(aemAFRData.lambda);
       break;
     case SCREEN_OXYGEN:
-      renderGraphView(aemAFRData->oxygen);
+      renderGraphView(aemAFRData.oxygen);
       break;
     case SCREEN_SYS_VOLTS:
-      renderGraphView(aemAFRData->sysVolts);
+      renderGraphView(aemAFRData.sysVolts);
       break;
     case SCREEN_HTR_VOLTS:
-      renderGraphView(aemAFRData->htrVolts);
+      renderGraphView(aemAFRData.htrVolts);
       break;
     case SCREEN_SUMMARY:
       renderSummaryData();
@@ -314,44 +341,44 @@ void renderSummaryData() {
   const int fvsz = 6;
 
   TV.set_cursor(xpos - 35, 0);
-  TV.print(aemAFRData->lambda);
+  TV.print(aemAFRData.lambda);
   TV.set_cursor(xpos - 15, 0);
   TV.print(" / ");
   TV.set_cursor(xpos, 0);
-  TV.print(aemAFRData->oxygen);
+  TV.print(aemAFRData.oxygen);
 
   TV.set_cursor(xpos, (vgap + fvsz) * 1);
-  TV.print(aemAFRData->sysVolts);
+  TV.print(aemAFRData.sysVolts);
   TV.set_cursor(xpos, (vgap + fvsz) * 2);
-  TV.print(aemAFRData->htrVolts);
+  TV.print(aemAFRData.htrVolts);
 
   TV.set_cursor(xpos, (vgap + fvsz) * 3);
-  if (aemAFRData->isLSU42) {
+  if (aemAFRData.isLSU42) {
     TV.print("LSU4.2");
-  } else if (aemAFRData->isLSU49) {
+  } else if (aemAFRData.isLSU49) {
     TV.print("LSU4.9");
-  } else if (aemAFRData->isNTKLH) {
-    TV.print("NTKLH");
-  } else if (aemAFRData->isNTKLHA) {
+  } else if (aemAFRData.isNTKLH) {
+    TV.print("NTKLH ");
+  } else if (aemAFRData.isNTKLHA) {
     TV.print("NTKLHA");
   } else  {
-    TV.print("N/C");
+    TV.print("N/C    ");
   }
 
   TV.set_cursor(xpos, (vgap + fvsz) * 4);
-  TV.print(aemAFRData->htrPIDLocked ? "YES" : "NO");
+  TV.print(aemAFRData.htrPIDLocked ? "YES" : "NO");
   TV.set_cursor(xpos, (vgap + fvsz) * 5);
-  TV.print(aemAFRData->usingFreeAirCal ? "YES" : "NO");
+  TV.print(aemAFRData.usingFreeAirCal ? "YES" : "NO");
   TV.set_cursor(xpos, (vgap + fvsz) * 6);
-  TV.print(aemAFRData->freeAirCalRequired ? "YES" : "NO");
+  TV.print(aemAFRData.freeAirCalRequired ? "YES" : "NO");
   TV.set_cursor(xpos, (vgap + fvsz) * 7);
-  TV.print(aemAFRData->lambdaDataValid ? "YES" : "NO");
+  TV.print(aemAFRData.lambdaDataValid ? "YES" : "NO");
   TV.set_cursor(xpos, (vgap + fvsz) * 8);
-  TV.print(AEM_AFR_STATE[aemAFRData->sensorState]);
+  TV.print(AEM_AFR_STATE[aemAFRData.sensorState]);
   TV.set_cursor(xpos, (vgap + fvsz) * 9);
-  TV.print(aemAFRData->sensorFault ? "YES" : "NO");
+  TV.print(aemAFRData.sensorFault ? "YES" : "NO");
   TV.set_cursor(xpos, (vgap + fvsz) * 10);
-  TV.print(aemAFRData->fatalError ? "YES" : "NO");
+  TV.print(aemAFRData.fatalError ? "YES" : "NO");
 }
 
 void renderGraphView(double value) {
@@ -502,4 +529,74 @@ int getOffsetLeft(int lower, int upper) {
     val = 8;
   }
   return val;
+}
+
+void DEBUG_loopSummary() {
+  if (DEBUG_d1) {
+    aemAFRData.lambda = aemAFRData.lambda + 0.1;
+    if (aemAFRData.lambda > 30) DEBUG_d1 = false;
+  } else {
+    if (aemAFRData.lambda <= 0) {
+      DEBUG_d1 = true;
+      aemAFRData.lambda = 0;
+    } else {
+      aemAFRData.lambda = aemAFRData.lambda - 0.1;
+    }
+  }
+  if (DEBUG_d2) {
+    aemAFRData.oxygen = aemAFRData.oxygen + 0.33;
+    if (aemAFRData.oxygen > 30) DEBUG_d2 = false;
+  } else {
+    aemAFRData.oxygen = aemAFRData.oxygen - 0.33;
+    if (aemAFRData.oxygen <= -30) DEBUG_d2 = true;
+  }
+  if (DEBUG_d3) {
+    aemAFRData.sysVolts = aemAFRData.sysVolts + 0.05;
+    if (aemAFRData.sysVolts > 14) DEBUG_d3 = false;
+  } else {
+    aemAFRData.sysVolts = aemAFRData.sysVolts - 0.05;
+    if (aemAFRData.sysVolts <= 5) DEBUG_d3 = true;
+  }
+  if (DEBUG_d4) {
+    aemAFRData.htrVolts = aemAFRData.htrVolts + 0.05;
+    if (aemAFRData.htrVolts > 9) DEBUG_d4 = false;
+  } else {
+    aemAFRData.htrVolts = aemAFRData.htrVolts - 0.05;
+    if (aemAFRData.htrVolts <= 6) DEBUG_d4 = true;
+  }
+
+  const unsigned long tm = millis();
+  if ((tm - lastDebounceTime) < 1000) return;
+
+  aemAFRData.isLSU42 = 0;
+  aemAFRData.isLSU49 = 0;
+  aemAFRData.isNTKLH = 0;
+  aemAFRData.isNTKLHA = 0;
+  switch (DEBUG_d5) {
+    case 0:
+      aemAFRData.isLSU42 = 1;
+      break;
+    case 1:
+      aemAFRData.isLSU49 = 1;
+      break;
+    case 2:
+      aemAFRData.isNTKLH = 1;
+      break;
+    case 3:
+      aemAFRData.isNTKLHA = 1;
+      break;
+    default:
+      break;
+  }
+  DEBUG_d5 = DEBUG_d5 >= 3 ? 0 : DEBUG_d5 + 1;
+  aemAFRData.htrPIDLocked = !aemAFRData.htrPIDLocked;
+  aemAFRData.usingFreeAirCal = !aemAFRData.usingFreeAirCal;
+  aemAFRData.freeAirCalRequired = !aemAFRData.freeAirCalRequired;
+  aemAFRData.lambdaDataValid = !aemAFRData.lambdaDataValid;
+  aemAFRData.sensorFault = !aemAFRData.sensorFault;
+  aemAFRData.fatalError = !aemAFRData.fatalError;
+  aemAFRData.sensorState = DEBUG_d6;
+  DEBUG_d6 = DEBUG_d6 >= 20 ? 0 : DEBUG_d6 + 1;
+
+  lastDebounceTime = tm;
 }
