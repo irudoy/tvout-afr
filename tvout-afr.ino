@@ -1,59 +1,9 @@
 #include <TVout.h>
 #include <fontALL.h>
 #include <EMUcan.h>
+#include "settings.h"
+#include "aemafr.h"
 #include "pitches.h"
-
-/**
- * ### Microchip MCP2515 wiring
- *
- * 
- * | MCP2515 | Arduino |
- * | :-----: | :-----: |
- * |   VCC   |   5V    |
- * |   GND   |   GND . |
- * |   SCK   |   SCK   | D52
- * |   SO    |   MISO  | D50
- * |   SI    |   MOSI  | D51
- * |   CS    |   10    | D53
- * |   INT   |   2     | n/c
- *
- * `CS` and `INT` pins can be changed by using `CAN.setPins(cs, irq)`.
- * `INT` pin is optional, it is only needed for receive callback mode.
- * If `INT` pin is used, it **must** be interrupt capable via [`attachInterrupt(...)`](https://www.arduino.cc/en/Reference/AttachInterrupt).
- * **NOTE**: Logic level converters must be used for boards which operate at 3.3V.
- *
- * ### TVOut
- * 
- * MCU         | SYNC  | VIDEO | AUDIO   | Arduino         | SYNC | VIDEO    | AUDIO
- * ------------|-------|-------|---------|-----------------|------|----------|-------
- * m168,m328   | B1    | D7    | B3      | NG,Decimila,UNO | 9    | 7        | 11
- * m1280,m2560 | B5    | A7    | B4      | Mega            | 11   | A7 (D29) | 10
- * m644,m1284p | D5    | A7    | D7      | sanguino        | 13   | A7 (D24) | 8
- * m32u4       | B5    | B4    | B7      | Leonardo        | 9    | 8        | 11
- * AT90USB1286 | B5    | F7    | B4      | --              | --   | --       | --
- * 
- * SYNC is on OCR1A and AUDIO is on OCR2A (except on the Arduino Leonardo, where AUDIO is on OCR0A)
- * There are some timing issues with the m1284p, may be related to sanguino core.
- * On NG, Decimila, UNO and Nano the sync is pin 9, video on 7 and audio on 11.
- * On Mega2560 sync is pin 11, video is on A7(D29) and audio is on pin 10.
- * 
- * MEGA2560
- * SYNC - Pin 11
- * VIDEO - A7 (D29)
- */
-
-#define CAN_SPEED CAN_500KBPS
-#define CAN_SPI_CS_PIN 53
-#define AEM_CAN_AFR_ID 0x80000180
-#define DELAY_FRAMES 3
-
-#define USE_DEBOUNCE false
-#define DEBOUNCE_DELAY 1000
-
-#define DEBUG_GRAPH false
-#define DEBUG_SUMMARY false
-#define DEBUG_CAN false
-#define DEBUG_CAN_AEMAFR false
 
 // SCREENS
 #define SCREEN_AFR 0
@@ -66,48 +16,6 @@
 
 int currentScreen = -1;
 int nextScreen = SCREEN_SUMMARY; // Default Screen
-
-typedef struct aemafrdata {
-  double lambda; // 0 to 96.0088 AFR
-  double oxygen; // -32.768% to 32.767%
-  double sysVolts; // System Volts
-  double htrVolts; // Heater Volts
-  bool isLSU42; // Bosch LSU4.2 Sensor Detected
-  bool isLSU49; // Bosch LSU4.9 Sensor Detected
-  bool isNTKLH; // NTK L#H# Sensor Detected
-  bool isNTKLHA; // NTK LHA Sensor Detected
-  bool htrPIDLocked; // Heater PID locked
-  bool usingFreeAirCal; // Using Free-Air Cal
-  bool freeAirCalRequired; // Free-Air cal required
-  bool lambdaDataValid; // Lambda Data Valid
-  uint8_t sensorState; // Sensor State ; 5 bit unsigned
-  bool sensorFault; // Sensor Fault
-  bool fatalError; // Fatal Error
-} AemAFRData;
-
-const char *AEM_AFR_STATE[21] = {
-  "RESET ",
-  "WRMUP ",
-  "STBLZ ",
-  "RDNPM ",
-  "EQLZE ",
-  "RDRCL ",
-  "RUN   ",
-  "OVRHT ",
-  "OVRCL ",
-  "HTRSH ",
-  "HTROP ",
-  "STFAC ",
-  "FAC   ",
-  "DTSEN ",
-  "RDJNC ",
-  "EVSTR ",
-  "SNSTP ",
-  "PRTRN ",
-  "SENSV ",
-  "NDFAC ",
-  "ERROR "
-};
 
 EMUcan emucan(0x600, CAN_SPI_CS_PIN);
 MCP2515 mcp = *emucan.getMcp2515();
@@ -344,6 +252,7 @@ void renderSummaryData() {
   const int vgap = 3;
   const int fvsz = 6;
 
+  TV.draw_rect(xpos - 35, 0, 60, fvsz * 3 + vgap * 2, 0, 0); // clear
   TV.set_cursor(xpos - 35, 0);
   TV.print(aemAFRData.lambda);
   TV.set_cursor(xpos - 15, 0);
@@ -370,19 +279,19 @@ void renderSummaryData() {
   }
 
   TV.set_cursor(xpos, (vgap + fvsz) * 4);
-  TV.print(aemAFRData.htrPIDLocked ? "YES" : "NO");
+  TV.print(aemAFRData.htrPIDLocked ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 5);
-  TV.print(aemAFRData.usingFreeAirCal ? "YES" : "NO");
+  TV.print(aemAFRData.usingFreeAirCal ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 6);
-  TV.print(aemAFRData.freeAirCalRequired ? "YES" : "NO");
+  TV.print(aemAFRData.freeAirCalRequired ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 7);
-  TV.print(aemAFRData.lambdaDataValid ? "YES" : "NO");
+  TV.print(aemAFRData.lambdaDataValid ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 8);
   TV.print(AEM_AFR_STATE[aemAFRData.sensorState]);
   TV.set_cursor(xpos, (vgap + fvsz) * 9);
-  TV.print(aemAFRData.sensorFault ? "YES" : "NO");
+  TV.print(aemAFRData.sensorFault ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 10);
-  TV.print(aemAFRData.fatalError ? "YES" : "NO");
+  TV.print(aemAFRData.fatalError ? "YES" : "NO ");
 }
 
 void renderGraphView(double value) {
