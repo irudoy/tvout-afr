@@ -36,6 +36,8 @@ uint8_t canRXerrors;
 uint8_t canTXerrors;
 uint8_t canErrorFlags;
 
+uint8_t prevBtnValue = 0;
+
 int lastDebounceTime = 0;
 int lastDebounceTime2 = 0;
 
@@ -73,6 +75,8 @@ void setup()  {
   ReturnAllFramesFunction frameProcessFn = handleCANFrame;
   emucan.ReturnAllFrames(frameProcessFn);
   Serial.println("------- CAN Read ----------");
+
+  pinMode(BTN_PIN, INPUT); // INPUT_PULLUP
 
   delay(1000);
 }
@@ -151,11 +155,20 @@ void loop() {
     canErrorFlags = mcp.getErrorFlags();
   }
 
-  if (Serial.available()) {
-    Serial.read();
-    nextScreen++;
-    if (nextScreen > MAX_SCREEN) nextScreen = 0;
+  uint8_t currBtnValue = analogRead(BTN_PIN);
+  bool isBtnOff = btnInRange(currBtnValue, 0);
+  bool isBtnPrevOff = btnInRange(prevBtnValue, 0);
+  if (isBtnOff && !isBtnPrevOff) {
+    if (btnInRange(prevBtnValue, BTN_VAL_1) || btnInRange(prevBtnValue, BTN_VAL_2)) {
+      nextScreen++;
+      if (nextScreen > MAX_SCREEN) nextScreen = 0;
+    }
+    if (btnInRange(prevBtnValue, BTN_VAL_3) || btnInRange(prevBtnValue, BTN_VAL_4)) {
+      nextScreen--;
+      if (nextScreen < 0) nextScreen = MAX_SCREEN;
+    }
   }
+  prevBtnValue = currBtnValue;
 
   /**
    * Setup static UI elements only once, after screen change
@@ -512,4 +525,8 @@ void DEBUG_loopSummary() {
   DEBUG_d6 = DEBUG_d6 >= 20 ? 0 : DEBUG_d6 + 1;
 
   lastDebounceTime = tm;
+}
+
+bool btnInRange(uint8_t val, uint8_t target) {
+  return (val <= (target + 5) && val >= (target - 5));
 }
