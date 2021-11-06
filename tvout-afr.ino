@@ -155,20 +155,27 @@ void loop() {
     canErrorFlags = mcp.getErrorFlags();
   }
 
+  // buttons press logic
   uint8_t currBtnValue = analogRead(BTN_PIN);
   bool isBtnOff = btnInRange(currBtnValue, 0);
   bool isBtnPrevOff = btnInRange(prevBtnValue, 0);
   if (isBtnOff && !isBtnPrevOff) {
-    if (btnInRange(prevBtnValue, BTN_VAL_1) || btnInRange(prevBtnValue, BTN_VAL_2)) {
+    if (btnInRange(prevBtnValue, BTN_VAL_1)) {
+      TV.tone(NOTE_F5, 50);
       nextScreen++;
       if (nextScreen > MAX_SCREEN) nextScreen = 0;
-    }
-    if (btnInRange(prevBtnValue, BTN_VAL_3) || btnInRange(prevBtnValue, BTN_VAL_4)) {
+    } else if (btnInRange(prevBtnValue, BTN_VAL_2)) {
+      TV.tone(NOTE_C5, 50);
       nextScreen--;
       if (nextScreen < 0) nextScreen = MAX_SCREEN;
+    } else if (btnInRange(prevBtnValue, BTN_VAL_3)) {
+      TV.tone(NOTE_C2, 50);
+    } else if (btnInRange(prevBtnValue, BTN_VAL_4)) {
+      TV.tone(NOTE_C3, 50);
     }
   }
   prevBtnValue = currBtnValue;
+  // buttons press logic
 
   /**
    * Setup static UI elements only once, after screen change
@@ -528,5 +535,5 @@ void DEBUG_loopSummary() {
 }
 
 bool btnInRange(uint8_t val, uint8_t target) {
-  return (val <= (target + 5) && val >= (target - 5));
+  return (val <= (target + 8) && val >= (target - 8));
 }
