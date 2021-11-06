@@ -1,6 +1,7 @@
 #include <TVout.h>
 #include <fontALL.h>
 #include <EMUcan.h>
+#include "pitches.h"
 
 /**
  * ### Microchip MCP2515 wiring
@@ -148,6 +149,9 @@ int freeRam () {
 void setup()  {
   // TV setup
   TV.begin(NTSC, 128, 96);
+  TV.tone(NOTE_F4, 150); delay(150);
+  TV.tone(NOTE_F4, 150); delay(150);
+  TV.tone(NOTE_AS4, 250);
 
   // Serial setup
   Serial.begin(9600);
