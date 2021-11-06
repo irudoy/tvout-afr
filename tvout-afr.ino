@@ -1,6 +1,7 @@
 #include <TVout.h>
 #include <fontALL.h>
 #include <EMUcan.h>
+#include <EEPROM.h>
 #include "settings.h"
 #include "aemafr.h"
 #include "pitches.h"
@@ -15,7 +16,7 @@
 // SCREENS
 
 int currentScreen = -1;
-int nextScreen = SCREEN_SUMMARY; // Default Screen
+int nextScreen = 0;
 
 EMUcan emucan(0x600, CAN_SPI_CS_PIN);
 MCP2515 mcp = *emucan.getMcp2515();
@@ -77,6 +78,9 @@ void setup()  {
   Serial.println("------- CAN Read ----------");
 
   pinMode(BTN_PIN, INPUT); // INPUT_PULLUP
+
+  nextScreen = EEPROM.read(MEM_ADDR_CURR_SCREEN);
+  if (nextScreen == 255) nextScreen = 0;
 
   delay(1000);
 }
@@ -182,6 +186,7 @@ void loop() {
    */
   if (currentScreen != nextScreen) {
     currentScreen = nextScreen;
+    EEPROM.update(MEM_ADDR_CURR_SCREEN, currentScreen);
     switch (nextScreen) {
       case SCREEN_AFR:
         resetGraphState("AFR", aemAFRData.lambda, 5, 25);

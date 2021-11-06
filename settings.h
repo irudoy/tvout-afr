@@ -9,6 +9,8 @@
 #define BTN_VAL_3 246
 #define BTN_VAL_4 160
 
+#define MEM_ADDR_CURR_SCREEN 0x0
+
 #define USE_DEBOUNCE false
 #define DEBOUNCE_DELAY 1000
 
