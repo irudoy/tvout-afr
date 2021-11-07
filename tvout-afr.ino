@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "aemafr.h"
 #include "pitches.h"
+#include "TVOLFont.h"
 
 // SCREENS
 #define SCREEN_AFR 0
@@ -26,12 +27,13 @@ AemAFRData aemAFRData;
 
 // Graph State
 const char *graphStateLabel;
-double graphStateMinValue;
 double graphStateMaxValue;
 int graphStateLower;
 int graphStateUpper;
 byte graphStatePoints[117];
 // Graph State
+
+bool shouldResetPeak = false;
 
 uint8_t canRXerrors;
 uint8_t canTXerrors;
@@ -174,6 +176,7 @@ void loop() {
       if (nextScreen < 0) nextScreen = MAX_SCREEN;
     } else if (btnInRange(prevBtnValue, BTN_VAL_3)) {
       TV.tone(NOTE_C2, 50);
+      shouldResetPeak = true; // Peak reset
     } else if (btnInRange(prevBtnValue, BTN_VAL_4)) {
       TV.tone(NOTE_C3, 50);
     }
@@ -332,21 +335,15 @@ void renderGraphView(double value) {
   }
   
   renderGraph(value, graphStateLower, graphStateUpper);
-  
-  TV.set_cursor(42, 32);
-  TV.select_font(font8x8);
-  TV.print(value, 2);
-  TV.draw_rect(40, 30, 44, 12, 1, -1);
 
-  if (value < graphStateMinValue) graphStateMinValue = value;
-  TV.set_cursor(0, 33);
-  TV.select_font(font6x8);
-  TV.print(graphStateMinValue, 1);
+  printLNum(0, 19, value);
 
-  if (value > graphStateMaxValue) graphStateMaxValue = value;
-  TV.set_cursor(103, 33);
+  if (value > graphStateMaxValue || shouldResetPeak) {
+    graphStateMaxValue = value;
+    shouldResetPeak = false;
+  }
+  TV.set_cursor(100, 29);
   TV.select_font(font6x8);
-  if (graphStateMaxValue < 10) TV.print(" ");
   TV.print(graphStateMaxValue, 1);
 }
 
@@ -397,15 +394,9 @@ void renderGraphUI() {
   TV.print(graphStateLabel);
   TV.draw_rect(0, 0, (strlen(graphStateLabel) * 8) + labelGapX * 2, 10, 1, 2);
 
-  TV.select_font(font6x8);
-  TV.set_cursor(0, 20);
-  TV.print("MIN");
-
-  TV.set_cursor(43, 20);
-  TV.print("Current");
-
-  TV.set_cursor(109, 20);
-  TV.print("MAX");
+  TV.select_font(font4x6);
+  TV.set_cursor(100, 21);
+  TV.print("PEAK");
 
   TV.select_font(font4x6);
 
@@ -430,7 +421,6 @@ void renderGraphUI() {
 
 void resetGraphState(const char *label, double value, int lower, int upper) {
   graphStateLabel = label;
-  graphStateMinValue = value;
   graphStateMaxValue = value;
   graphStateLower = lower;
   graphStateUpper = upper;
@@ -541,4 +531,57 @@ void DEBUG_loopSummary() {
 
 bool btnInRange(uint8_t val, uint8_t target) {
   return (val <= (target + 8) && val >= (target - 8));
+}
+
+void printLNum(uint8_t posx, uint8_t posy, double value) {
+  char buf[6];
+  dtostrf(value, 0, 2, buf); // todo: use min_width for padding maybe?
+  const uint8_t pad = 32;
+  const uint8_t w = 16;
+  for (uint8_t i = 0; i < 6; i++) {
+    char c = buf[i];
+    const uint8_t x = posx + w * i;
+    const uint8_t y = posy;
+    switch (c) {
+      case 48:
+        TV.bitmap(x, y, TVOLFont, pad * 0, w, w);
+        break;
+      case 49:
+        TV.bitmap(x, y, TVOLFont, pad * 1, w, w);
+        break;
+      case 50:
+        TV.bitmap(x, y, TVOLFont, pad * 2, w, w);
+        break;
+      case 51:
+        TV.bitmap(x, y, TVOLFont, pad * 3, w, w);
+        break;
+      case 52:
+        TV.bitmap(x, y, TVOLFont, pad * 4, w, w);
+        break;
+      case 53:
+        TV.bitmap(x, y, TVOLFont, pad * 5, w, w);
+        break;
+      case 54:
+        TV.bitmap(x, y, TVOLFont, pad * 6, w, w);
+        break;
+      case 55:
+        TV.bitmap(x, y, TVOLFont, pad * 7, w, w);
+        break;
+      case 56:
+        TV.bitmap(x, y, TVOLFont, pad * 8, w, w);
+        break;
+      case 57:
+        TV.bitmap(x, y, TVOLFont, pad * 9, w, w);
+        break;
+      case 45:
+        TV.bitmap(x, y, TVOLFont, pad * 10, w, w);
+        break;
+      case 46:
+        TV.bitmap(x, y, TVOLFont, pad * 11, w, w);
+        break;
+      default:
+        TV.bitmap(x, y, TVOLFont, pad * 12, w, w);
+        break;
+    }
+  }
 }
