@@ -560,7 +560,7 @@ void printLNum(uint8_t posx, uint8_t posy, double value) {
   char buf[5];
   dtostrf(value, 0, 1, buf); // todo: use min_width for padding maybe?
   const uint8_t pad = 32;
-  const uint8_t w = 16;
+  const uint8_t w = 14;
   for (uint8_t i = 0; i < 5; i++) {
     char c = buf[i];
     const uint8_t x = posx + w * i;
