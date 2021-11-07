@@ -286,18 +286,18 @@ void renderSummaryData() {
   const int vgap = 3;
   const int fvsz = 6;
 
-  TV.draw_rect(xpos - 35, 0, 60, fvsz * 3 + vgap * 2, 0, 0); // clear
-  TV.set_cursor(xpos - 35, 0);
-  TV.print(aemAFRData.lambda);
-  TV.set_cursor(xpos - 15, 0);
+  TV.draw_rect(xpos - 31, 0, 60, fvsz * 3 + vgap * 2, 0, 0); // clear
+  TV.set_cursor(xpos - 31, 0);
+  TV.print(aemAFRData.lambda, 1);
+  TV.set_cursor(xpos - 13, 0);
   TV.print(" / ");
   TV.set_cursor(xpos, 0);
-  TV.print(aemAFRData.oxygen);
+  TV.print(aemAFRData.oxygen, 1);
 
   TV.set_cursor(xpos, (vgap + fvsz) * 1);
-  TV.print(aemAFRData.sysVolts);
+  TV.print(aemAFRData.sysVolts, 1);
   TV.set_cursor(xpos, (vgap + fvsz) * 2);
-  TV.print(aemAFRData.htrVolts);
+  TV.print(aemAFRData.htrVolts, 1);
 
   TV.set_cursor(xpos, (vgap + fvsz) * 3);
   if (aemAFRData.isLSU42) {
@@ -556,11 +556,11 @@ bool btnInRange(uint8_t val, uint8_t target) {
 }
 
 void printLNum(uint8_t posx, uint8_t posy, double value) {
-  char buf[6];
-  dtostrf(value, 0, 2, buf); // todo: use min_width for padding maybe?
+  char buf[5];
+  dtostrf(value, 0, 1, buf); // todo: use min_width for padding maybe?
   const uint8_t pad = 32;
   const uint8_t w = 16;
-  for (uint8_t i = 0; i < 6; i++) {
+  for (uint8_t i = 0; i < 5; i++) {
     char c = buf[i];
     const uint8_t x = posx + w * i;
     const uint8_t y = posy;
