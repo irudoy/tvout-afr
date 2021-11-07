@@ -340,6 +340,7 @@ void renderAFRGraphView(double value) {
     if (shouldClearWarmupMessage) {
       TV.draw_rect(28, 58, 83, 12, 0, 0);
       shouldClearWarmupMessage = false;
+      TV.tone(NOTE_C6, 500);
     }
   }
 }
