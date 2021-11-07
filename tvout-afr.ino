@@ -68,17 +68,21 @@ void setup()  {
   TV.tone(NOTE_AS4, 250);
 
   // Serial setup
-  Serial.begin(9600);
-  while (!Serial);
-  Serial.println("CAN Init");
+  if (DEBUG_SERIAL_ENABLE) {
+    Serial.begin(9600);
+    while (!Serial);
+    Serial.println("CAN Init");
+  }
 
   // CAN Setup
   emucan.begin(CAN_SPEED, MCP_8MHZ);
-  Serial.print("EMUCAN_LIB_VERSION: ");
-  Serial.println(EMUCAN_LIB_VERSION);
   ReturnAllFramesFunction frameProcessFn = handleCANFrame;
   emucan.ReturnAllFrames(frameProcessFn);
-  Serial.println("------- CAN Read ----------");
+  if (DEBUG_SERIAL_ENABLE) {
+    Serial.print("EMUCAN_LIB_VERSION: ");
+    Serial.println(EMUCAN_LIB_VERSION);
+    Serial.println("------- CAN Read ----------");
+  }
 
   pinMode(BTN_PIN, INPUT); // INPUT_PULLUP
 

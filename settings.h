@@ -14,6 +14,7 @@
 #define USE_DEBOUNCE false
 #define DEBOUNCE_DELAY 1000
 
+#define DEBUG_SERIAL_ENABLE false
 #define DEBUG_GRAPH false
 #define DEBUG_SUMMARY false
 #define DEBUG_CAN false
