@@ -34,6 +34,7 @@ byte graphStatePoints[117];
 // Graph State
 
 bool shouldResetPeak = false;
+bool shouldClearWarmupMessage = true;
 
 uint8_t canRXerrors;
 uint8_t canTXerrors;
@@ -153,7 +154,12 @@ void handleCANFrame(const struct can_frame *frame) {
 void loop() {
   emucan.checkEMUcan();
 
-  if (DEBUG_SUMMARY) DEBUG_loopSummary();
+  if (DEBUG_SUMMARY) {
+    if (!shouldClearWarmupMessage && aemAFRData.sensorState == AemAFRData::SensorState::WarmUp) {
+      shouldClearWarmupMessage = true;
+    }
+    DEBUG_loopSummary();
+  }
 
   if (DEBUG_CAN) {
     canRXerrors = emucan.CanErrorCounter(false);
@@ -220,7 +226,7 @@ void loop() {
    */
   switch (currentScreen) {
     case SCREEN_AFR:
-      renderGraphView(aemAFRData.lambda);
+      renderAFRGraphView(aemAFRData.lambda);
       break;
     case SCREEN_OXYGEN:
       renderGraphView(aemAFRData.oxygen);
@@ -320,6 +326,22 @@ void renderSummaryData() {
   TV.print(aemAFRData.sensorFault ? "YES" : "NO ");
   TV.set_cursor(xpos, (vgap + fvsz) * 10);
   TV.print(aemAFRData.fatalError ? "YES" : "NO ");
+}
+
+void renderAFRGraphView(double value) {
+  if (aemAFRData.sensorState == AemAFRData::SensorState::WarmUp) {
+    TV.set_cursor(30, 60);
+    TV.select_font(font8x8);
+    TV.print("WARMING UP");
+    TV.draw_rect(28, 58, 83, 12, 1, -1);
+    renderGraphView(0);
+  } else {
+    renderGraphView(value);
+    if (shouldClearWarmupMessage) {
+      TV.draw_rect(28, 58, 83, 12, 0, 0);
+      shouldClearWarmupMessage = false;
+    }
+  }
 }
 
 void renderGraphView(double value) {
